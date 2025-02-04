@@ -3,13 +3,14 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const otpGenerator = require('otp-generator');
 const otpModel = require('../models/OTP');
-const optGenerator = require('otp-generator');
+const otpGenerator = require('otp-generator');
+const profileModel = require('../models/Profile');
 
 // opt send
 exports.optSend = async (req, res) => {
   try {
     //* step 1: extract email from request
-    const { email } = await req.body;
+    const { email } = req.body;
     if (!email) {
       return res.status(400).json({
         message: 'All fields are required',
@@ -32,6 +33,8 @@ exports.optSend = async (req, res) => {
       specialChars: false,
       lowerCaseAlphabets: false,
     });
+
+    console.log();
 
     console.log('OTP Generated ===>>> ', otp);
 
@@ -57,11 +60,18 @@ exports.optSend = async (req, res) => {
 // signup
 exports.signup = async (req, res) => {
   try {
-    const { email, firstName, lastName, password, accountType } = await req.body;
+    const { email, firstName, lastName, password, confirmPassword, contactNumbber, accountType, otp } = await req.body;
 
-    if (!email || !firstName || !lastName || !password || !accountType) {
+    if (!email || !firstName || !lastName || !password || !accountType || !contactNumbber) {
       return res.status(400).json({
         message: 'All fields are required',
+        success: false,
+      });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({
+        message: 'Passwords do not match',
         success: false,
       });
     }
@@ -74,24 +84,46 @@ exports.signup = async (req, res) => {
       });
     }
 
-    // hash paswords
+    //todo: checing recent Otp
+    const recentOtp = await otpModel.findOne({ email });
+    // const recentOtp = await userModel.findOne({ email });
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    if (recentOtp && recentOtp.otp === otp) {
+      // creating new profile to save in database additional information
 
-    const user = new User({
-      email,
-      firstName,
-      lastName,
-      password: hashedPassword,
-      accountType,
-    });
+      const newProfile = await profileModel.create({
+        gender: null,
+        contact: null,
+        about: null,
+        dateOfBirth: null,
+      });
 
-    await user.save();
-    res.status(201).json({
-      message: 'User created successfully',
-      success: true,
-    });
+      // hash paswords
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+
+      const user = new User({
+        email,
+        firstName,
+        lastName,
+        password: hashedPassword,
+        accountType,
+        contactNumbber,
+        additionalDetails: newProfile._id,
+        image: `https://ui-avatars.com/api/?name=${firstName}+${lastName}&background=random`,
+      });
+
+      await user.save();
+      res.status(201).json({
+        message: 'User created successfully',
+        success: true,
+      });
+    } else {
+      return res.status(400).json({
+        message: 'Invalid OTP',
+        success: false,
+      });
+    }
   } catch (error) {
     res.status(500).json({
       error: error.message,
@@ -139,7 +171,7 @@ exports.login = async (req, res) => {
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' }); // 1 hour token expiration time
 
-    res.cookie('token', token, { expiresIn: '1h' }).json({
+    res.cookie('token', token, { httpOnly: true, maxAge: 3600000 }).json({
       message: 'Logged in successfully',
       success: true,
       user: {
@@ -160,3 +192,18 @@ exports.login = async (req, res) => {
 };
 
 // forgot password
+
+exports.logout = async (req, res) => {
+  try {
+    res.clearCookie('token').json({
+      message: 'Logged out successfully',
+      success: true,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message,
+      message: 'Something went wrong while logging out',
+      success: false,
+    });
+  }
+};
